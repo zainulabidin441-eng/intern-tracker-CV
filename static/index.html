@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Zigron CV Sprint Portal</title>
+<title>Zigron CV Sprint — Computer Vision Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#101113;--s1:#18191c;--s2:#212328;--line:#2e3036;--tx:#ececee;--mu:#8b8f98;--or:#ff7a1a;--or2:#ffb26b;--ok:#3ddc97;--bad:#ff5d5d;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -60,14 +60,14 @@ footer{text-align:center;color:var(--mu);font-size:12px;margin-top:40px}
 <canvas id="bg"></canvas>
 <div class="wrap">
 <header>
-<div class="brand"><div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#161616" stroke-width="2.4" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3"/><circle cx="12" cy="12" r="3"/></svg></div><div>ZIGRON <span style="color:var(--or)">AI ENGINEERING</span></div></div>
+<div class="brand"><div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#161616" stroke-width="2.4" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3"/><circle cx="12" cy="12" r="3"/></svg></div><div>ZIGRON <span style="color:var(--or)">AI TRAINING</span></div></div>
 <div class="pill"><span class="dot"></span>Sprint <b id="dayPill">Day 1</b> · Nov 24 – Dec 3, 2026</div>
 </header>
 
 <section class="hero">
-<div class="eyebrow">COMPUTER VISION TEAM SPRINT</div>
-<h1>Retail Shelf &amp; Queue <span>Analytics Portal</span></h1>
-<p>Submit your daily module work. Our AI reviewer grades it against the sprint rubric and the shared integration contract, and the cohort matrix updates live.</p>
+<div class="eyebrow">PROJECT 2 · COMPUTER VISION COHORT</div>
+<h1>Computer Vision <span>Sprint Tracker</span></h1>
+<p>Track daily computer vision sprint deliverables across the cohort. Submit your repository link for automated rubric verification and live progress updates.</p>
 </section>
 
 <div class="kpis">
@@ -91,7 +91,7 @@ footer{text-align:center;color:var(--mu);font-size:12px;margin-top:40px}
 
 <div>
 <div class="card">
-<h2>Cohort Progress Matrix</h2><p class="sub">Live status across all 5 interns · weekend break Nov 28–29 · click a score for feedback</p>
+<h2>Cohort Progress Matrix</h2><p class="sub">Live daily progress across all 5 interns · weekend break Nov 28–29 · click a score for feedback</p>
 <div class="tbl"><table id="mx"></table></div>
 </div>
 <div class="card arch"><h2>Shared CV Pipeline Architecture</h2><p class="sub">Every CV module exposes <span class="mono" style="color:var(--or2)">process_frame(frame) → (ndarray, dict)</span> and chains with Sidra’s privacy filter into a Streamlit/Gradio live UI.</p>
