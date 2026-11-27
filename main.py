@@ -1,10 +1,19 @@
-import os, re, json, time, sqlite3, datetime as dt
+import os, re, json, time, datetime as dt
 from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+import psycopg
+from psycopg.rows import dict_row
 
 GROQ_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -13,8 +22,9 @@ ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.getenv("AI_MODEL", "").strip()
 GH_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
 ADMIN_KEY = os.getenv("ADMIN_KEY", "").strip()
-DATA = Path(os.getenv("DATA_DIR", "./data")); DATA.mkdir(parents=True, exist_ok=True)
-DB = str(DATA / "portal.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATA = Path(os.getenv("DATA_DIR", "./data"))
+DATA.mkdir(parents=True, exist_ok=True)
 
 def active_provider() -> str:
     if GROQ_KEY: return "groq"
@@ -42,14 +52,46 @@ DAYS = [  # (date, theme, required commit)
 ]
 PKT = dt.timezone(dt.timedelta(hours=5))
 
-def db():
-    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
-    c.execute("""CREATE TABLE IF NOT EXISTS subs(k TEXT PRIMARY KEY, intern TEXT, day INT, data TEXT,
-                 attempts INT DEFAULT 1, ts REAL)""")
-    return c
+def get_conn():
+    if not DATABASE_URL:
+        raise HTTPException(500, "DATABASE_URL is not configured")
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
+
+def init_db():
+    if not DATABASE_URL:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.submissions (
+                id BIGSERIAL PRIMARY KEY,
+                intern_id TEXT NOT NULL,
+                day INTEGER NOT NULL CHECK (day >= 0 AND day <= 7),
+                repo_url TEXT NOT NULL,
+                notes TEXT DEFAULT '',
+                score INTEGER NOT NULL,
+                code INTEGER NOT NULL,
+                robust INTEGER NOT NULL,
+                integ INTEGER NOT NULL,
+                docs INTEGER NOT NULL,
+                feedback TEXT NOT NULL,
+                steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+                src TEXT DEFAULT '',
+                attempts INTEGER NOT NULL DEFAULT 1,
+                ts BIGINT NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (intern_id, day)
+            )
+            """
+        )
+        conn.commit()
 
 app = FastAPI(title="Zigron CV Sprint Portal")
 last_hit: dict = {}
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 class Sub(BaseModel):
     intern_id: str
@@ -60,17 +102,54 @@ class Sub(BaseModel):
 @app.get("/health")
 def health():
     prov = active_provider()
-    return {"ok": True, "ai": prov != "heuristic", "provider": prov}
+    db_ok = False
+    if DATABASE_URL:
+        try:
+            with get_conn() as conn:
+                conn.execute("SELECT 1").fetchone()
+            db_ok = True
+        except Exception:
+            db_ok = False
+    return {"ok": True, "ai": prov != "heuristic", "provider": prov, "db": db_ok}
 
 @app.get("/api/submissions")
 def submissions():
-    with db() as c:
-        return {r["k"]: {**json.loads(r["data"]), "attempts": r["attempts"]} for r in c.execute("SELECT * FROM subs")}
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM public.submissions").fetchall()
+    out = {}
+    for r in rows:
+        key = f"{r['intern_id']}_{r['day']}"
+        steps = r["steps"] if isinstance(r["steps"], list) else json.loads(r["steps"] or "[]")
+        out[key] = {
+            "score": r["score"],
+            "code": r["code"],
+            "robust": r["robust"],
+            "integ": r["integ"],
+            "docs": r["docs"],
+            "feedback": r["feedback"],
+            "steps": steps,
+            "src": r["src"],
+            "url": r["repo_url"],
+            "notes": r["notes"],
+            "ts": r["ts"],
+            "attempts": r["attempts"],
+        }
+    return out
 
 @app.delete("/api/submissions/{key}")
 def delete(key: str, x_admin_key: str = Header("")):
-    if not ADMIN_KEY or x_admin_key != ADMIN_KEY: raise HTTPException(403, "Not allowed")
-    with db() as c: c.execute("DELETE FROM subs WHERE k=?", (key,))
+    if not ADMIN_KEY or x_admin_key != ADMIN_KEY:
+        raise HTTPException(403, "Not allowed")
+    parts = key.rsplit("_", 1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        raise HTTPException(400, "Invalid submission key")
+    intern_id, day_idx = parts[0], int(parts[1])
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM public.submissions WHERE intern_id = %s AND day = %s",
+            (intern_id, day_idx),
+        )
+        conn.commit()
     return {"deleted": key}
 
 async def gh(client, path, raw=False):
@@ -259,12 +338,47 @@ async def submit(s: Sub, req: Request):
     try: res, src_label = await grade(s.intern_id, s.day, s.notes, repo)
     except HTTPException: raise
     except Exception: raise HTTPException(502, "Reviewer returned an unreadable answer, please resubmit")
-    res.update(url=s.repo_url, ts=int(time.time() * 1000), src=src_label)
-    k = f"{s.intern_id}_{s.day}"
-    with db() as c:
-        c.execute("""INSERT INTO subs(k,intern,day,data,ts) VALUES(?,?,?,?,?)
-                     ON CONFLICT(k) DO UPDATE SET data=excluded.data, ts=excluded.ts, attempts=attempts+1""",
-                  (k, s.intern_id, s.day, json.dumps(res), time.time()))
+    ts_ms = int(time.time() * 1000)
+    res.update(url=s.repo_url, ts=ts_ms, src=src_label)
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO public.submissions (
+                intern_id, day, repo_url, notes, score, code, robust, integ, docs, feedback, steps, src, attempts, ts, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 1, %s, now())
+            ON CONFLICT (intern_id, day) DO UPDATE SET
+                repo_url = EXCLUDED.repo_url,
+                notes = EXCLUDED.notes,
+                score = EXCLUDED.score,
+                code = EXCLUDED.code,
+                robust = EXCLUDED.robust,
+                integ = EXCLUDED.integ,
+                docs = EXCLUDED.docs,
+                feedback = EXCLUDED.feedback,
+                steps = EXCLUDED.steps,
+                src = EXCLUDED.src,
+                attempts = public.submissions.attempts + 1,
+                ts = EXCLUDED.ts,
+                updated_at = now()
+            """,
+            (
+                s.intern_id,
+                s.day,
+                s.repo_url,
+                s.notes,
+                res["score"],
+                res["code"],
+                res["robust"],
+                res["integ"],
+                res["docs"],
+                res["feedback"],
+                json.dumps(res.get("steps") or []),
+                res["src"],
+                ts_ms,
+            ),
+        )
+        conn.commit()
     return res
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
